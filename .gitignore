@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Dočasné soubory
+/temp_images/
+/image_list.json
+
+# Log soubory
+*.log
+
+# Soubory IDE / editoru (nepovinné)
+.vscode/
+.idea/

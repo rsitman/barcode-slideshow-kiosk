@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>Slideshow</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; font-family: sans-serif; color: white; }
+        #container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        #slideImage { display: none; min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: contain; }
+        #messageDiv { font-size: 2em; text-align: center; padding: 20px; }
+        /* Popisek necháme prozatím jednoduchý */
+        #slideCaption { position: absolute; bottom: 10px; width: 90%; left: 5%; background: rgba(0,0,0,0.7); padding: 10px; text-align: center; font-size: 1.5em; border-radius: 5px; display: none; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <img id="slideImage">
+        <div id="messageDiv"></div>
+    </div>
+    <div id="slideCaption"></div>
+
+    <script>
+        const img = document.getElementById('slideImage');
+        const msg = document.getElementById('messageDiv');
+        const cap = document.getElementById('slideCaption');
+        const jsonUrl = 'image_list.json';
+
+        let interval;
+        let lastTimestamp = 0;
+
+        function setState(state, data) {
+            console.log("Setting state:", state, data);
+            if (interval) clearInterval(interval);
+
+            if (state === 'message') {
+                img.style.display = 'none';
+                cap.style.display = 'none';
+                msg.style.display = 'block';
+                msg.textContent = data.text;
+            } else if (state === 'slideshow') {
+                msg.style.display = 'none';
+                let currentIndex = 0;
+
+                const showNext = () => {
+                    const slide = data.slides[currentIndex];
+                    console.log("Showing slide:", slide);
+                    
+                    img.onerror = () => { 
+                        console.error("IMAGE ONERROR FAILED TO LOAD:", img.src);
+                        showMessage("Chyba načtení obrázku.");
+                    };
+                    img.onload = () => {
+                        console.log("IMAGE ONLOAD SUCCESS:", img.src);
+                        img.style.display = 'block';
+                        if (slide.text) {
+                            cap.textContent = slide.text;
+                            cap.style.display = 'block';
+                        } else {
+                            cap.style.display = 'none';
+                        }
+                    };
+                    
+                    img.src = `${slide.url}?_=${new Date().getTime()}`;
+
+                    currentIndex = (currentIndex + 1) % data.slides.length;
+                };
+
+                showNext();
+                if (data.slides.length > 1) {
+                    interval = setInterval(showNext, data.delay * 1000);
+                }
+            }
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch(`${jsonUrl}?_=${new Date().getTime()}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.timestamp > lastTimestamp) {
+                    lastTimestamp = data.timestamp;
+                    if (data.slides && data.slides.length > 0) {
+                        setState('slideshow', { slides: data.slides, delay: data.delaySeconds });
+                    } else {
+                        setState('message', { text: data.message || "Naskenujte kód." });
+                    }
+                }
+            } catch (e) {
+                console.error("Fetch failed:", e);
+            }
+        }
+
+        setState('message', { text: 'Naskenujte čárový kód...' });
+        setInterval(fetchData, 1500);
+    </script>
+</body>
+</html>

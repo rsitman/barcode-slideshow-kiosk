@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Barcode Slideshow App
+Comment=Spustí aplikaci pro zobrazování příloh z čárových kódů
+Exec=/home/admin/barcode_slideshow/run.sh
+Terminal=false
+Categories=Utility;
