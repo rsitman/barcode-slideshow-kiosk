@@ -2,96 +2,150 @@
 <html lang="cs">
 <head>
     <meta charset="UTF-8">
-    <title>Slideshow</title>
+    <title>Slideshow Příloh</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; font-family: sans-serif; color: white; }
-        #container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
-        #slideImage { display: none; min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: contain; }
-        #messageDiv { font-size: 2em; text-align: center; padding: 20px; }
-        /* Popisek necháme prozatím jednoduchý */
-        #slideCaption { position: absolute; bottom: 10px; width: 90%; left: 5%; background: rgba(0,0,0,0.7); padding: 10px; text-align: center; font-size: 1.5em; border-radius: 5px; display: none; }
+        body { display: flex; justify-content: center; align-items: center; }
+        #slideshowContainer { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; position: relative; }
+        #slideImage { min-width: 0; min-height: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.5s ease-in-out; }
+        #slideImage.visible { opacity: 1; }
+        #slideCaption { position: absolute; bottom: 0; left: 0; right: 0; background-color: rgba(0, 0, 0, 0.6); color: white; padding: 15px 20px; font-size: 3.0em; text-align: center; text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.9); pointer-events: none; display: none; }
+        #slideCaption.visible { opacity: 1; display: block; }
+        #messageDiv { font-size: 4em; text-align: center; padding: 20px; display: none; }
+        #messageDiv.pulse { animation: pulse 2s infinite ease-in-out; }
+        @keyframes pulse { 0% { opacity: 0.8; } 50% { opacity: 1; } 100% { opacity: 0.8; } }
+        /* Indikátor pauzy */
+        #pauseIndicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 4em;
+            color: rgba(255, 255, 255, 0.7);
+            text-shadow: 2px 2px 4px black;
+            display: none; /* Skryto ve výchozím stavu */
+        }
     </style>
 </head>
 <body>
-    <div id="container">
-        <img id="slideImage">
-        <div id="messageDiv"></div>
-    </div>
+    <img id="slideImage" src="" alt="Příloha">
     <div id="slideCaption"></div>
+    <div id="messageDiv"></div>
+    <div id="pauseIndicator">❚❚</div> <!-- Symbol pauzy -->
 
     <script>
-        const img = document.getElementById('slideImage');
-        const msg = document.getElementById('messageDiv');
-        const cap = document.getElementById('slideCaption');
+        const imgElement = document.getElementById('slideImage');
+        const captionElement = document.getElementById('slideCaption');
+        const messageDiv = document.getElementById('messageDiv');
+        const pauseIndicator = document.getElementById('pauseIndicator');
         const jsonUrl = 'image_list.json';
-
-        let interval;
+        
+        let slideshowInterval;
+        let currentSlides = [];
+        let currentIndex = 0;
         let lastTimestamp = 0;
+        let slideshowDelay = 5000;
 
-        function setState(state, data) {
-            console.log("Setting state:", state, data);
-            if (interval) clearInterval(interval);
+        function showMessage(text) {
+            if (slideshowInterval) clearInterval(slideshowInterval);
+            imgElement.style.display = 'none';
+            captionElement.style.display = 'none';
+            pauseIndicator.style.display = 'none';
+            messageDiv.textContent = text;
+            messageDiv.style.display = 'block';
+            messageDiv.classList.toggle('pulse', text.includes('Načítám'));
+        }
 
-            if (state === 'message') {
-                img.style.display = 'none';
-                cap.style.display = 'none';
-                msg.style.display = 'block';
-                msg.textContent = data.text;
-            } else if (state === 'slideshow') {
-                msg.style.display = 'none';
-                let currentIndex = 0;
+        function showSlide(index) {
+            if (currentSlides.length === 0) return;
+            const slide = currentSlides[index];
+            messageDiv.style.display = 'none';
+            imgElement.style.display = 'block';
+            imgElement.src = `${slide.url}?_=${new Date().getTime()}`;
+            imgElement.alt = `Obrázek ${index + 1}/${currentSlides.length}`;
+            if (slide.text && slide.text.trim() !== "") {
+                captionElement.textContent = slide.text;
+                captionElement.style.display = 'block';
+            } else {
+                captionElement.style.display = 'none';
+            }
+        }
+        
+        imgElement.onerror = function() {
+            console.error("Chyba při načítání obrázku:", this.src);
+            showMessage("Chyba: Obrázek se nepodařilo načíst.");
+        };
 
-                const showNext = () => {
-                    const slide = data.slides[currentIndex];
-                    console.log("Showing slide:", slide);
-                    
-                    img.onerror = () => { 
-                        console.error("IMAGE ONERROR FAILED TO LOAD:", img.src);
-                        showMessage("Chyba načtení obrázku.");
-                    };
-                    img.onload = () => {
-                        console.log("IMAGE ONLOAD SUCCESS:", img.src);
-                        img.style.display = 'block';
-                        if (slide.text) {
-                            cap.textContent = slide.text;
-                            cap.style.display = 'block';
-                        } else {
-                            cap.style.display = 'none';
-                        }
-                    };
-                    
-                    img.src = `${slide.url}?_=${new Date().getTime()}`;
+        function nextSlide() {
+            if (currentSlides.length <= 1) return;
+            currentIndex = (currentIndex + 1) % currentSlides.length;
+            showSlide(currentIndex);
+        }
 
-                    currentIndex = (currentIndex + 1) % data.slides.length;
-                };
+        function pauseSlideshow() {
+            if (slideshowInterval) {
+                clearInterval(slideshowInterval);
+                slideshowInterval = null;
+                pauseIndicator.style.display = 'block';
+                console.log("Slideshow pozastavena.");
+            }
+        }
 
-                showNext();
-                if (data.slides.length > 1) {
-                    interval = setInterval(showNext, data.delay * 1000);
+        function playSlideshow() {
+            if (!slideshowInterval && currentSlides.length > 1) {
+                // Spustíme hned další slide a pak nastavíme interval
+                nextSlide();
+                slideshowInterval = setInterval(nextSlide, slideshowDelay);
+                pauseIndicator.style.display = 'none';
+                console.log("Slideshow spuštěna.");
+            }
+        }
+
+        function handleNewData(data) {
+            // Zpracování příkazů má přednost
+            if (data.command) {
+                console.log("Přijat příkaz:", data.command);
+                if (data.command === 'pause') {
+                    pauseSlideshow();
+                } else if (data.command === 'play') {
+                    playSlideshow();
                 }
+                return; // Po příkazu už nic dalšího neděláme
+            }
+            
+            // Pokud přišla nová data (ne jen příkaz)
+            if (slideshowInterval) clearInterval(slideshowInterval);
+            pauseIndicator.style.display = 'none'; // Skryjeme indikátor pauzy
+            
+            currentSlides = data.slides || [];
+            slideshowDelay = (data.delaySeconds || 5) * 1000;
+
+            if (currentSlides.length > 0) {
+                currentIndex = 0;
+                showSlide(currentIndex);
+                if (currentSlides.length > 1) {
+                    slideshowInterval = setInterval(nextSlide, slideshowDelay);
+                }
+            } else if (data.message) {
+                showMessage(data.message);
             }
         }
 
         async function fetchData() {
             try {
-                const res = await fetch(`${jsonUrl}?_=${new Date().getTime()}`);
-                if (!res.ok) return;
-                const data = await res.json();
-                if (data.timestamp > lastTimestamp) {
+                const response = await fetch(`${jsonUrl}?_=${new Date().getTime()}`);
+                if (!response.ok) return;
+                const data = await response.json();
+                if (data.timestamp && data.timestamp > lastTimestamp) {
                     lastTimestamp = data.timestamp;
-                    if (data.slides && data.slides.length > 0) {
-                        setState('slideshow', { slides: data.slides, delay: data.delaySeconds });
-                    } else {
-                        setState('message', { text: data.message || "Naskenujte kód." });
-                    }
+                    handleNewData(data);
                 }
-            } catch (e) {
-                console.error("Fetch failed:", e);
+            } catch (error) {
+                console.error("Chyba při zpracování JSON:", error);
             }
         }
-
-        setState('message', { text: 'Naskenujte čárový kód...' });
-        setInterval(fetchData, 1500);
+        
+        showMessage("Naskenujte čárový kód...");
+        setInterval(fetchData, 1000);
     </script>
 </body>
 </html>
