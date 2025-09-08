@@ -7,6 +7,7 @@ import os
 import json
 import shutil
 import hashlib
+import uuid
 from urllib.parse import urljoin
 from evdev import InputDevice, ecodes, list_devices
 import select
@@ -63,13 +64,19 @@ def run_web_server(config):
     logging.info(f"Spouštím lokální web server na http://{server_address[0]}:{server_address[1]}")
     httpd.serve_forever()
 
-def update_image_list_json(slide_data, config, message=""):
+def update_image_list_json(slide_data, config, message="", command=None):
     json_file_path = config.get('Slideshow', 'ImageListJsonFile', fallback=os.path.join(BASE_DIR, 'image_list.json'))
     delay_seconds = config.getint('Slideshow', 'DelaySeconds', fallback=5)
-    data_to_write = {"slides": slide_data, "timestamp": int(time.time() * 1000), "message": message, "delaySeconds": delay_seconds}
+    data_to_write = {
+        "slides": slide_data,
+        "timestamp": int(time.time() * 1000),
+        "message": message,
+        "delaySeconds": delay_seconds,
+        "command": command
+    }
     try:
         with open(json_file_path, 'w', encoding='utf-8') as f: json.dump(data_to_write, f, ensure_ascii=False, indent=4)
-        logging.info(f"JSON soubor aktualizován s {len(slide_data)} položkami. Zpráva: '{message}'")
+        logging.info(f"JSON soubor aktualizován. Slidů: {len(slide_data)}, Zpráva: '{message}', Příkaz: '{command}'")
     except Exception as e: logging.error(f"Chyba při zápisu do JSON: {e}")
 
 def launch_chromium_viewer(config):
@@ -112,7 +119,6 @@ def initialize_barcode_reader(config):
         devices = [InputDevice(p) for p in list_devices()]
     except Exception as e:
         logging.error(f"Chyba výpisu zařízení: {e}"); return False
-
     found_device = None
     logging.info(f"Hledám čtečku s Phys: '{target_phys_path}'")
     for dev in devices:
@@ -123,20 +129,12 @@ def initialize_barcode_reader(config):
                 break
             else:
                 logging.warning(f"Zařízení na cestě '{target_phys_path}' má nesprávné jméno: '{dev.name}'.")
-    
     if not found_device:
         logging.warning(f"Zařízení na cestě '{target_phys_path}' nenalezeno. Hledám podle jména '{target_name_keyword}'.")
         potential_devices = [dev for dev in devices if target_name_keyword.lower() in dev.name.lower()]
-        if len(potential_devices) == 1:
+        if len(potential_devices) >= 1:
             found_device = potential_devices[0]
-            logging.info(f"Nalezeno 1 zařízení podle jména: {found_device.name}")
-        elif len(potential_devices) > 1:
-            logging.warning(f"Nalezeno více zařízení ({len(potential_devices)}) odpovídajících jménu. Používám první.")
-            found_device = potential_devices[0]
-        else:
-            logging.error(f"Nenalezeno žádné zařízení odpovídající Phys ani jménu.")
-            return False
-            
+            logging.info(f"Nalezeno zařízení podle jména: {found_device.name}")
     if found_device:
         try:
             found_device.grab(); STATE["barcode_reader_device"] = found_device
@@ -148,6 +146,7 @@ def initialize_barcode_reader(config):
                 logging.info(f"Zařízení '{found_device.name}' použito (bez grab)."); return True
             except Exception as e_open:
                 logging.error(f"Nepodařilo se ani otevřít {found_device.name}: {e_open}")
+    logging.error(f"Čtečka odpovídající kritériím nenalezena.")
     return False
 
 def download_image(args):
@@ -158,8 +157,7 @@ def download_image(args):
     try:
         img_res = requests.get(abs_url, headers=headers, timeout=20)
         img_res.raise_for_status()
-        content_type = img_res.headers.get('Content-Type','image/jpeg')
-        ext = content_type.split('/')[-1].split(';')[0].replace('jpeg', 'jpg')
+        ext = img_res.headers.get('Content-Type','image/jpeg').split('/')[-1].split(';')[0].replace('jpeg', 'jpg')
         if ext == 'octet-stream': logging.warning("Server vrátil 'octet-stream', používám '.jpg'."); ext = 'jpg'
         fname = f"image_{i+1}.{ext.lower()}"
         fpath = os.path.join(TEMP_IMAGE_DIR, fname)
@@ -207,11 +205,27 @@ def handle_scan_in_background(barcode):
 
 def process_barcode_data(barcode):
     now = time.time()
-    debounce_seconds = load_config().getfloat('Scanner', 'DebounceSeconds', fallback=2.0)
+    config = load_config() # Načteme config zde pro debounce a příkazy
+    debounce_seconds = config.getfloat('Scanner', 'DebounceSeconds', fallback=2.0)
     if not barcode.strip(): return
     if barcode == STATE["last_barcode_data"] and (now - STATE["last_scan_time"]) < debounce_seconds:
         logging.info(f"Duplicitní sken '{barcode}', ignoruji."); return
+    
     STATE["last_scan_time"], STATE["last_barcode_data"] = now, barcode
+    logging.info(f"Zpracovávám kód: {barcode}")
+
+    # Zpracování speciálních příkazů
+    if barcode == 'SLIDESHOW_PAUSE':
+        logging.info("Detekován příkaz pro pozastavení slideshow.")
+        update_image_list_json([], config, message="", command="pause")
+        return
+    
+    if barcode == 'SLIDESHOW_PLAY':
+        logging.info("Detekován příkaz pro spuštění slideshow.")
+        update_image_list_json([], config, message="", command="play")
+        return
+        
+    # Pokud to není příkaz, spustíme zpracování na pozadí
     thread = threading.Thread(target=handle_scan_in_background, args=(barcode,)); thread.start()
 
 def read_from_barcode_reader_loop():
@@ -247,14 +261,20 @@ def main():
     logging.info("Aplikace spuštěna.")
     try: config = load_config()
     except FileNotFoundError: return
+    
     DEVICE_FINGERPRINT = generate_device_fingerprint()
     if not DEVICE_FINGERPRINT: logging.critical("Nepodařilo se vytvořit otisk prstu zařízení.")
+    
     if not os.path.exists(TEMP_IMAGE_DIR): os.makedirs(TEMP_IMAGE_DIR)
+    
     web_server_thread = threading.Thread(target=run_web_server, args=(config,), daemon=True); web_server_thread.start()
     time.sleep(1)
+    
     update_image_list_json([], config, "Naskenujte čárový kód...")
     launch_chromium_viewer(config)
+    
     if not initialize_barcode_reader(config): logging.warning("Inicializace čtečky selhala.")
+    
     logging.info("Spouštím hlavní smyčku.")
     try:
         while True:
